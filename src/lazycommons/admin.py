@@ -1,11 +1,12 @@
 import json
 import csv
-from django.db import models
 from django.contrib import admin
 from django.urls import reverse
 from django.utils.html import format_html
 from django.http import HttpResponse
+from django.core.serializers.json import DjangoJSONEncoder
 
+from .helpers import queryset_to_dicts
 
 @admin.action(description="Duplicate selected Item(s)")
 def duplicate_action(modeladmin, request, queryset):
@@ -21,45 +22,34 @@ def export_csv_action(modeladmin, request, queryset):
     """
     Generic CSV export admin action.
     """
-    model = queryset.model
-    meta = model._meta
-
-    # Only export concrete fields (skip reverse relations)
-    fields = [field for field in meta.fields]
+    data, headers = queryset_to_dicts(queryset)
+    meta = queryset.model._meta
 
     response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = f'attachment; filename="{meta.model_name}.csv"'
+    response["Content-Disposition"] = "attachment; filename=\"%s\".csv" % meta.model_name
 
     writer = csv.writer(response)
+    writer.writerow(headers)
 
-    # Header row
-    writer.writerow([field.name for field in fields])
+    for row in data:
+        writer.writerow([row.get(h) for h in headers])
 
-    for obj in queryset:
-        row = []
+    return response
 
-        for field in fields:
-            value = None
+@admin.action(description="Export selected objects as JSON")
+def export_json_action(modeladmin, request, queryset):
+    """
+    Generic JSON export admin action.
+    """
+    data, _ = queryset_to_dicts(queryset)
 
-            # Choices: use get_FOO_display()
-            if field.choices:
-                display_method = "get_%s_display" % field.name
-                if hasattr(obj, display_method):
-                    value = getattr(obj, display_method)()
-                else:
-                    value = getattr(obj, field.name)
+    meta = queryset.model._meta
 
-            # ForeignKey: resolve via __str__()
-            elif isinstance(field, models.ForeignKey):
-                fk_obj = getattr(obj, field.name)
-                value = str(fk_obj) if fk_obj else ""
-
-            # Default field
-            else:
-                value = getattr(obj, field.name)
-
-            row.append(value)
-        writer.writerow(row)
+    response = HttpResponse(
+        json.dumps(data, cls=DjangoJSONEncoder, indent=2),
+        content_type="application/json",
+    )
+    response["Content-Disposition"] = "attachment; filename=\"%s\".csv" % meta.model_name
 
     return response
 
